@@ -1,0 +1,221 @@
+// https://www.kernel.org/doc/Documentation/vm/pagemap.txt
+
+pagemap, from the userspace perspective
+---------------------------------------
+【译文】页面映射，从用户空间的角度来看----------------------------------------
+
+pagemap is a new (as of 2.6.25) set of interfaces in the kernel that allow
+userspace programs to examine the page tables and related information by
+reading files in /proc.
+【译文】pagemap 是内核中的一组新接口（从 2.6.25 开始），它允许用户空间程序通过读取 /proc 中的文件来检查页表和相关信息。
+
+There are four components to pagemap:
+【译文】pagemap 有四个组件：
+
+ * /proc/pid/pagemap.  This file lets a userspace process find out which
+   physical frame each virtual page is mapped to.  It contains one 64-bit
+   value for each virtual page, containing the following data (from
+   fs/proc/task_mmu.c, above pagemap_read):
+【译文】* /proc/pid/pagemap。这个文件让用户空间进程找出每个虚拟页面映射到哪个物理框架。它包含每个虚拟页面的一个 64 位值，包含以下数据（来自 fs/proc/task_mmu.c，在 pagemap_read 上方）：
+
+    * Bits 0-54  page frame number (PFN) if present
+    * Bits 0-4   swap type if swapped
+    * Bits 5-54  swap offset if swapped
+    * Bit  55    pte is soft-dirty (see Documentation/vm/soft-dirty.txt)
+    * Bit  56    page exclusively mapped (since 4.2)
+    * Bits 57-60 zero
+    * Bit  61    page is file-page or shared-anon (since 3.5)
+    * Bit  62    page swapped
+    * Bit  63    page present
+【译文】* 位 0-54 页面帧号 (PFN)（如果存在） * 位 0-4 交换类型（如果已交换） * 位 5-54 交换偏移量（如果已交换） * 位 55 pte 是软脏（参见 Documentation/vm/soft-dirty.txt ) * 位 56 页面专门映射（自 4.2 起） * 位 57-60 为零 * 位 61 页面是文件页面或共享匿名（自 3.5 起） * 位 62 页面交换 * 位 63 页面存在
+
+   Since Linux 4.0 only users with the CAP_SYS_ADMIN capability can get PFNs.
+   In 4.0 and 4.1 opens by unprivileged fail with -EPERM.  Starting from
+   4.2 the PFN field is zeroed if the user does not have CAP_SYS_ADMIN.
+   Reason: information about PFNs helps in exploiting Rowhammer vulnerability.
+【译文】从 Linux 4.0 开始，只有具有 CAP_SYS_ADMIN 能力的用户才能获得 PFN。在 4.0 和 4.1 中，使用 -EPERM 以非特权方式打开失败。从 4.2 开始，如果用户没有 CAP_SYS_ADMIN，则 PFN 字段为零。原因：有关 PFN 的信息有助于利用 Rowhammer 漏洞。
+
+   If the page is not present but in swap, then the PFN contains an
+   encoding of the swap file number and the page's offset into the
+   swap. Unmapped pages return a null PFN. This allows determining
+   precisely which pages are mapped (or in swap) and comparing mapped
+   pages between processes.
+【译文】如果页面不存在但在交换中，则 PFN 包含交换文件编号的编码和页面在交换中的偏移量。未映射的页面返回空 PFN。这允许精确地确定哪些页面被映射（或交换）并比较进程之间的映射页面。
+
+   Efficient users of this interface will use /proc/pid/maps to
+   determine which areas of memory are actually mapped and llseek to
+   skip over unmapped regions.
+【译文】该接口的高效用户将使用 /proc/pid/maps 来确定实际映射的内存区域，并使用 llseek 跳过未映射的区域。
+
+ * /proc/kpagecount.  This file contains a 64-bit count of the number of
+   times each page is mapped, indexed by PFN.
+【译文】* /proc/kpagecount。该文件包含每个页面被映射的次数的 64 位计数，由 PFN 索引。
+
+ * /proc/kpageflags.  This file contains a 64-bit set of flags for each
+   page, indexed by PFN.
+【译文】* /proc/kpageflags。该文件包含每个页面的一组 64 位标志，由 PFN 索引。
+
+   The flags are (from fs/proc/page.c, above kpageflags_read):
+【译文】标志是（来自 fs/proc/page.c，在 kpageflags_read 上方）：
+
+     0. LOCKED
+     1. ERROR
+     2. REFERENCED
+     3. UPTODATE
+     4. DIRTY
+     5. LRU
+     6. ACTIVE
+     7. SLAB
+     8. WRITEBACK
+     9. RECLAIM
+    10. BUDDY
+    11. MMAP
+    12. ANON
+    13. SWAPCACHE
+    14. SWAPBACKED
+    15. COMPOUND_HEAD
+    16. COMPOUND_TAIL
+    17. HUGE
+    18. UNEVICTABLE
+    19. HWPOISON
+    20. NOPAGE
+    21. KSM
+    22. THP
+    23. BALLOON
+    24. ZERO_PAGE
+    25. IDLE
+【译文】0. 锁定 1. 错误 2. 引用 3. 更新 4. 脏 5. LRU 6. 活动 7. SLAB 8. 回写 9. 回收 10. 好友 11. MMAP 12. 匿名 13. 交换缓存 14. 交换 15. COMPOUND_HEAD 16. COMPOUND_TAIL 17. HUGE 18. UNEVICTABLE 19. HWPISON 20. NOPAGE 21. KSM 22. THP 23. BALLOON 24. ZERO_PAGE 25. IDLE
+
+ * /proc/kpagecgroup.  This file contains a 64-bit inode number of the
+   memory cgroup each page is charged to, indexed by PFN. Only available when
+   CONFIG_MEMCG is set.
+【译文】* /proc/kpagecgroup。该文件包含一个 64 位的内存 cgroup 的 inode 编号，每个页面被收费，由 PFN 索引。仅在设置了 CONFIG_MEMCG 时可用。
+
+Short descriptions to the page flags:
+【译文】页面标志的简短描述：
+
+ 0. LOCKED
+    page is being locked for exclusive access, eg. by undergoing read/write IO
+【译文】0. LOCKED 页面被锁定以进行独占访问，例如。通过进行读/写 IO
+
+ 7. SLAB
+    page is managed by the SLAB/SLOB/SLUB/SLQB kernel memory allocator
+    When compound page is used, SLUB/SLQB will only set this flag on the head
+    page; SLOB will not flag it at all.
+【译文】7. SLAB页由SLAB/SLOB/SLUB/SLQB内核内存分配器管理当使用复合页时，SLUB/SLQB只会在头页设置这个标志； SLOB 根本不会标记它。
+
+10. BUDDY
+    a free memory block managed by the buddy system allocator
+    The buddy system organizes free memory in blocks of various orders.
+    An order N block has 2^N physically contiguous pages, with the BUDDY flag
+    set for and _only_ for the first page.
+【译文】10. BUDDY 由伙伴系统分配器管理的空闲内存块 伙伴系统以各种顺序的块组织空闲内存。一个顺序为 N 的块有 2^N 个物理上连续的页，第一页设置了 BUDDY 标志，并且_only_。
+
+15. COMPOUND_HEAD
+16. COMPOUND_TAIL
+    A compound page with order N consists of 2^N physically contiguous pages.
+    A compound page with order 2 takes the form of "HTTT", where H donates its
+    head page and T donates its tail page(s).  The major consumers of compound
+    pages are hugeTLB pages (Documentation/vm/hugetlbpage.txt), the SLUB etc.
+    memory allocators and various device drivers. However in this interface,
+    only huge/giga pages are made visible to end users.
+17. HUGE
+    this is an integral part of a HugeTLB page
+【译文】15. COMPOUND_HEAD 16. COMPOUND_TAIL 顺序为 N 的复合页由 2^N 个物理上连续的页组成。具有顺序 2 的复合页面采用“HTTT”的形式，其中 H 捐赠其首页，T 捐赠其尾页。复合页面的主要消费者是hugeTLB 页面（Documentation/vm/hugetlbpage.txt）、SLUB 等内存分配器和各种设备驱动程序。然而，在这个界面中，最终用户只能看到巨大/千兆页面。 17. HUGE 这是一个 HugeTLB 页面的一个组成部分
+
+19. HWPOISON
+    hardware detected memory corruption on this page: don't touch the data!
+【译文】19. HWPISON 硬件检测到此页面内存损坏：请勿触摸数据！
+
+20. NOPAGE
+    no page frame exists at the requested address
+【译文】20. NOPAGE 请求地址不存在页框
+
+21. KSM
+    identical memory pages dynamically shared between one or more processes
+【译文】21. KSM 相同的内存页在一个或多个进程之间动态共享
+
+22. THP
+    contiguous pages which construct transparent hugepages
+【译文】22. 构建透明大页面的 THP 连续页面
+
+23. BALLOON
+    balloon compaction page
+【译文】23. BALLOON 气球压缩页面
+
+24. ZERO_PAGE
+    zero page for pfn_zero or huge_zero page
+【译文】24. Pfn_zero 或 huge_zero 页面的 ZERO_PAGE 零页面
+
+25. IDLE
+    page has not been accessed since it was marked idle (see
+    Documentation/vm/idle_page_tracking.txt). Note that this flag may be
+    stale in case the page was accessed via a PTE. To make sure the flag
+    is up-to-date one has to read /sys/kernel/mm/page_idle/bitmap first.
+【译文】25. IDLE 页面被标记为空闲后未被访问（参见 Documentation/vm/idle_page_tracking.txt）。请注意，如果该页面是通过 PTE 访问的，则此标志可能已过时。为了确保标志是最新的，必须首先读取 /sys/kernel/mm/page_idle/bitmap。
+
+    [IO related page flags]
+ 1. ERROR     IO error occurred
+ 3. UPTODATE  page has up-to-date data
+              ie. for file backed page: (in-memory data revision >= on-disk one)
+ 4. DIRTY     page has been written to, hence contains new data
+              ie. for file backed page: (in-memory data revision >  on-disk one)
+ 8. WRITEBACK page is being synced to disk
+【译文】[IO 相关页面标志] 1. ERROR IO 错误发生 3. UPTODATE 页面有最新数据，即。对于文件支持的页面：（内存数据修订> =磁盘上的一个） 4. DIRTY 页面已被写入，因此包含新数据，即。对于文件支持的页面：（内存中数据修订 > 磁盘上一个） 8. WRITEBACK 页面正在同步到磁盘
+
+    [LRU related page flags]
+ 5. LRU         page is in one of the LRU lists
+ 6. ACTIVE      page is in the active LRU list
+18. UNEVICTABLE page is in the unevictable (non-)LRU list
+                It is somehow pinned and not a candidate for LRU page reclaims,
+		eg. ramfs pages, shmctl(SHM_LOCK) and mlock() memory segments
+ 2. REFERENCED  page has been referenced since last LRU list enqueue/requeue
+ 9. RECLAIM     page will be reclaimed soon after its pageout IO completed
+11. MMAP        a memory mapped page
+12. ANON        a memory mapped page that is not part of a file
+13. SWAPCACHE   page is mapped to swap space, ie. has an associated swap entry
+14. SWAPBACKED  page is backed by swap/RAM
+【译文】[LRU 相关页面标志] 5. LRU 页面在 LRU 列表之一中 6. ACTIVE 页面在活动 LRU 列表中 18. UNEVICTABLE 页面在不可撤销（非）LRU 列表中 它以某种方式固定而不是候选LRU 页面回收，例如。 ramfs 页面、shmctl(SHM_LOCK) 和 mlock() 内存段 2. REFERENCED page 自上次 LRU 列表 enqueue/requeue 以来已被引用 9. RECLAIM 页面将在其 pageout IO 完成后很快被回收 11. MMAP 内存映射页面 12. ANON不属于文件的内存映射页 13. SWAPCACHE 页映射到交换空间，即。具有关联的交换条目 14. SWAPBACKED 页面由交换/RAM 支持
+
+The page-types tool in the tools/vm directory can be used to query the
+above flags.
+【译文】tools/vm 目录下的 page-types 工具可用于查询上述标志。
+
+Using pagemap to do something useful:
+【译文】使用 pagemap 做一些有用的事情：
+
+The general procedure for using pagemap to find out about a process' memory
+usage goes like this:
+【译文】使用 pagemap 来了解进程的内存使用情况的一般过程如下：
+
+ 1. Read /proc/pid/maps to determine which parts of the memory space are
+    mapped to what.
+ 2. Select the maps you are interested in -- all of them, or a particular
+    library, or the stack or the heap, etc.
+ 3. Open /proc/pid/pagemap and seek to the pages you would like to examine.
+ 4. Read a u64 for each page from pagemap.
+ 5. Open /proc/kpagecount and/or /proc/kpageflags.  For each PFN you just
+    read, seek to that entry in the file, and read the data you want.
+【译文】1.读取/proc/pid/maps，确定内存空间的哪些部分映射到什么。 2. 选择您感兴趣的地图——所有这些地图，或特定库，或堆栈或堆等。 3. 打开/proc/pid/pagemap 并查找您想要检查的页面。 4. 从 pagemap 中为每个页面读取一个 u64。 5. 打开 /proc/kpagecount 和/或 /proc/kpageflags。对于您刚刚读取的每个 PFN，在文件中查找该条目，然后读取您想要的数据。
+
+For example, to find the "unique set size" (USS), which is the amount of
+memory that a process is using that is not shared with any other process,
+you can go through every map in the process, find the PFNs, look those up
+in kpagecount, and tally up the number of pages that are only referenced
+once.
+【译文】例如，要查找“唯一集大小”（USS），即进程正在使用的不与任何其他进程共享的内存量，您可以遍历进程中的每个映射，找到 PFN，查看那些在 kpagecount 中增加的，并计算只被引用一次的页数。
+
+Other notes:
+【译文】其他注意事项：
+
+Reading from any of the files will return -EINVAL if you are not starting
+the read on an 8-byte boundary (e.g., if you sought an odd number of bytes
+into the file), or if the size of the read is not a multiple of 8 bytes.
+【译文】如果您没有在 8 字节边界上开始读取（例如，如果您在文件中寻找奇数字节），或者如果读取的大小不是倍数，则从任何文件中读取都将返回 -EINVAL 8个字节。
+
+Before Linux 3.11 pagemap bits 55-60 were used for "page-shift" (which is
+always 12 at most architectures). Since Linux 3.11 their meaning changes
+after first clear of soft-dirty bits. Since Linux 4.2 they are used for
+flags unconditionally.
+
+【译文】在 Linux 3.11 之前，页面映射位 55-60 用于“页面移位”（在大多数体系结构中始终为 12）。从 Linux 3.11 开始，在第一次清除软脏位后，它们的含义发生了变化。从 Linux 4.2 开始，它们无条件地用于标志。
